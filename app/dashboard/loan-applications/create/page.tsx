@@ -1,9 +1,9 @@
-// app/dashboard/loan-applications/create/page.tsx - WITH DYNAMIC LOAN PRODUCTS
+// app/dashboard/loan-applications/create/page.tsx - WITH DOCUMENT UPLOAD
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, AlertCircle, FileText, File, Image as ImageIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
 interface LoanProduct {
@@ -18,9 +18,15 @@ interface LoanProduct {
   status: string;
 }
 
+interface SelectedFile {
+  file: File;
+  category: string;
+}
+
 export default function CreateApplicationPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Loan Products State
   const [loanProducts, setLoanProducts] = useState<LoanProduct[]>([]);
@@ -38,7 +44,7 @@ export default function CreateApplicationPage() {
     idNumber: '',
     address: '',
     
-    // Loan Details - Will be populated based on selected product
+    // Loan Details
     loanProductId: '',
     loanType: '',
     loanAmount: '',
@@ -53,6 +59,12 @@ export default function CreateApplicationPage() {
     yearsInBusiness: '',
     employees: '',
   });
+  
+  // Document Upload State
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
+  const [documentCategory, setDocumentCategory] = useState('ID Document');
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ uploaded: 0, total: 0 });
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +111,6 @@ export default function CreateApplicationPage() {
       ...prev,
       loanProductId: product._id,
       loanType: product.name,
-      // Reset amount and tenure when product changes
       loanAmount: '',
       tenure: '',
     }));
@@ -110,6 +121,152 @@ export default function CreateApplicationPage() {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
     setValidationError(null);
+  };
+
+  // File Upload Handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      addFiles(Array.from(files));
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (files) {
+      addFiles(Array.from(files));
+    }
+  };
+
+  const addFiles = (files: File[]) => {
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    const allowedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+
+    const validFiles: SelectedFile[] = [];
+    const errors: string[] = [];
+
+    files.forEach(file => {
+      // Check file size
+      if (file.size > maxSize) {
+        errors.push(`${file.name} is too large (max 10MB)`);
+        return;
+      }
+
+      // Check file type
+      if (!allowedTypes.includes(file.type)) {
+        errors.push(`${file.name} has an unsupported file type`);
+        return;
+      }
+
+      validFiles.push({
+        file,
+        category: documentCategory,
+      });
+    });
+
+    if (errors.length > 0) {
+      alert('Some files were not added:\n' + errors.join('\n'));
+    }
+
+    setSelectedFiles(prev => [...prev, ...validFiles]);
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const getFileIcon = (mimeType: string) => {
+    if (mimeType.startsWith('image/')) {
+      return <ImageIcon className="w-5 h-5 text-blue-600" />;
+    } else if (mimeType === 'application/pdf') {
+      return <FileText className="w-5 h-5 text-red-600" />;
+    } else {
+      return <File className="w-5 h-5 text-gray-600" />;
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const uploadDocuments = async (applicationId: string): Promise<{
+    success: boolean;
+    uploaded: number;
+    total?: number;
+    errors?: string[];
+  }> => {
+    if (selectedFiles.length === 0) {
+      return { success: true, uploaded: 0 };
+    }
+
+    setUploadProgress({ uploaded: 0, total: selectedFiles.length });
+
+    let uploadedCount = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const { file, category } = selectedFiles[i];
+
+      try {
+        const formData = new FormData();
+        formData.append('files', file);
+        formData.append('relatedTo', 'Application');
+        formData.append('relatedId', applicationId);
+        formData.append('category', category);
+        formData.append('description', `Document for loan application ${applicationId}`);
+
+        const token = localStorage.getItem('auth_token');
+        
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          headers: {
+            ...(token && { 'Authorization': `Bearer ${token}` }),
+          },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload ${file.name}`);
+        }
+
+        uploadedCount++;
+        setUploadProgress({ uploaded: uploadedCount, total: selectedFiles.length });
+      } catch (err: any) {
+        console.error(`Error uploading ${file.name}:`, err);
+        errors.push(`${file.name}: ${err.message}`);
+      }
+    }
+
+    return {
+      success: uploadedCount > 0,
+      uploaded: uploadedCount,
+      total: selectedFiles.length,
+      errors: errors.length > 0 ? errors : undefined,
+    };
   };
 
   const validateForm = () => {
@@ -165,7 +322,6 @@ export default function CreateApplicationPage() {
 
       // Transform data for API
       const applicationData = {
-        // Personal Information
         fullName: formData.fullName,
         email: formData.email,
         phone: formData.phone,
@@ -173,16 +329,12 @@ export default function CreateApplicationPage() {
         gender: formData.gender,
         idNumber: formData.idNumber,
         address: formData.address,
-        
-        // Loan Details
         loanProductId: formData.loanProductId,
         loanType: formData.loanType,
         loanAmount: parseFloat(formData.loanAmount),
         tenure: parseInt(formData.tenure),
         purpose: formData.purpose,
         status: formData.status,
-        
-        // Employment Information
         employment: formData.employment,
         income: parseFloat(formData.income),
         ...(formData.businessName && { businessName: formData.businessName }),
@@ -190,6 +342,7 @@ export default function CreateApplicationPage() {
         ...(formData.employees && { employees: parseInt(formData.employees) }),
       };
 
+      // Create application
       const response = await fetch('/api/applications', {
         method: 'POST',
         headers: {
@@ -204,10 +357,29 @@ export default function CreateApplicationPage() {
         throw new Error(errorData.error || 'Failed to create application');
       }
 
-      const result = await response.json();
+      const createdApplication = await response.json();
       
-      // Success! Redirect to applications list
-      alert('Application created successfully!');
+      // Upload documents if any
+      let uploadResult: { success: boolean; uploaded: number; total?: number; errors?: string[] } = { 
+        success: true, 
+        uploaded: 0 
+      };
+      if (selectedFiles.length > 0) {
+        uploadResult = await uploadDocuments(createdApplication._id);
+      }
+
+      // Show success message
+      if (uploadResult.uploaded > 0) {
+        alert(`Application created successfully with ${uploadResult.uploaded} document(s)!`);
+      } else {
+        alert('Application created successfully!');
+      }
+
+      // Show upload errors if any
+      if (uploadResult.errors && uploadResult.errors.length > 0) {
+        console.warn('Some documents failed to upload:', uploadResult.errors);
+      }
+
       router.push('/dashboard/loan-applications');
       
     } catch (err: any) {
@@ -215,6 +387,7 @@ export default function CreateApplicationPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setUploadProgress({ uploaded: 0, total: 0 });
     }
   };
 
@@ -476,7 +649,7 @@ export default function CreateApplicationPage() {
             </div>
           </div>
 
-          {/* Loan Amount and Tenure - Only show if product is selected */}
+          {/* Loan Amount and Tenure */}
           {selectedProduct && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -648,13 +821,146 @@ export default function CreateApplicationPage() {
           </div>
         </div>
 
-        {/* Document Upload Placeholder */}
+        {/* Document Upload */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Supporting Documents</h2>
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-            <div className="text-gray-500">
-              <p className="font-bold mb-2">Document upload feature</p>
-              <p className="text-sm">Will be implemented in the next phase</p>
+          
+          <div className="space-y-4">
+            {/* File Upload Area */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition ${
+                isDragging
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                multiple
+                className="hidden"
+              />
+              
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mb-3">
+                  <Plus className="w-6 h-6 text-gray-600" />
+                </div>
+                <p className="font-bold text-gray-900 mb-1">
+                  Drop files here or click to browse
+                </p>
+                <p className="text-sm text-gray-600 mb-3">
+                  Supported: PDF, JPG, PNG, DOC, DOCX (Max 10MB each)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold transition"
+                >
+                  Select Files
+                </button>
+              </div>
+            </div>
+
+            {/* Document Category Selector */}
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Document Category (for next upload)
+              </label>
+              <select
+                value={documentCategory}
+                onChange={(e) => setDocumentCategory(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="ID Document">ID Document</option>
+                <option value="Income Proof">Income Proof</option>
+                <option value="Bank Statement">Bank Statement</option>
+                <option value="Business License">Business License</option>
+                <option value="Tax Document">Tax Document</option>
+                <option value="Property Document">Property Document</option>
+                <option value="Photo">Photo</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            {/* Selected Files List */}
+            {selectedFiles.length > 0 && (
+              <div>
+                <h3 className="font-bold text-gray-900 mb-3">
+                  Selected Files ({selectedFiles.length})
+                </h3>
+                <div className="space-y-2">
+                  {selectedFiles.map((fileData, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+                    >
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="flex-shrink-0">
+                          {getFileIcon(fileData.file.type)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-gray-900 truncate">
+                            {fileData.file.name}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-gray-600">
+                            <span>{formatFileSize(fileData.file.size)}</span>
+                            <span>•</span>
+                            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+                              {fileData.category}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(index)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                        title="Remove file"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload Progress */}
+            {uploadProgress.total > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-bold text-blue-900">
+                    Uploading Documents...
+                  </span>
+                  <span className="text-sm text-blue-700">
+                    {uploadProgress.uploaded} / {uploadProgress.total}
+                  </span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${(uploadProgress.uploaded / uploadProgress.total) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* File Requirements */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-sm font-bold text-gray-900 mb-2">Required Documents:</p>
+              <ul className="text-sm text-gray-600 space-y-1">
+                <li>• Valid government-issued ID (passport, ID card, or driver's license)</li>
+                <li>• Proof of income (salary slips, bank statements, or tax returns)</li>
+                <li>• Proof of address (utility bill or rental agreement)</li>
+                <li>• Business license (for business loans)</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -671,9 +977,16 @@ export default function CreateApplicationPage() {
           <button
             type="submit"
             disabled={loading || !selectedProduct}
-            className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? 'Creating Application...' : 'Submit Application'}
+            {loading ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Creating Application...</span>
+              </>
+            ) : (
+              'Submit Application'
+            )}
           </button>
         </div>
       </form>

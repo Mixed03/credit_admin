@@ -1,12 +1,14 @@
-// lib/upload-utils.ts - FILE UPLOAD UTILITIES
+// lib/upload-utils.ts
 import fs from 'fs';
 import path from 'path';
-import { writeFile, mkdir } from 'fs/promises';
+import { promisify } from 'util';
 
-// Configuration
-const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_FILE_TYPES = {
+const writeFile = promisify(fs.writeFile);
+const unlink = promisify(fs.unlink);
+const mkdir = promisify(fs.mkdir);
+
+// File type configurations
+export const ALLOWED_FILE_TYPES = {
   images: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
   documents: [
     'application/pdf',
@@ -16,7 +18,11 @@ const ALLOWED_FILE_TYPES = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   ],
   all: [
-    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/gif',
+    'image/webp',
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -25,81 +31,53 @@ const ALLOWED_FILE_TYPES = {
   ],
 };
 
-export interface UploadConfig {
-  maxFileSize?: number;
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+interface SaveFileOptions {
   allowedTypes?: string[];
-  uploadDir?: string;
+  maxSize?: number;
   generateUniqueName?: boolean;
 }
 
-export interface UploadResult {
+interface SaveFileResult {
   success: boolean;
   fileName?: string;
+  originalName?: string;
   filePath?: string;
   fileUrl?: string;
   fileSize?: number;
   mimeType?: string;
-  originalName?: string;
   error?: string;
 }
 
 /**
  * Generate a unique filename
  */
-export function generateUniqueFileName(originalName: string): string {
+function generateUniqueFileName(originalName: string): string {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  const ext = path.extname(originalName);
-  const name = path.basename(originalName, ext).replace(/[^a-z0-9]/gi, '_').toLowerCase();
-  return `${name}_${timestamp}_${random}${ext}`;
-}
-
-/**
- * Validate file type
- */
-export function validateFileType(mimeType: string, allowedTypes: string[] = ALLOWED_FILE_TYPES.all): boolean {
-  return allowedTypes.includes(mimeType);
-}
-
-/**
- * Validate file size
- */
-export function validateFileSize(size: number, maxSize: number = MAX_FILE_SIZE): boolean {
-  return size <= maxSize;
-}
-
-/**
- * Get file extension from mime type
- */
-export function getExtensionFromMimeType(mimeType: string): string {
-  const extensions: Record<string, string> = {
-    'image/jpeg': '.jpg',
-    'image/jpg': '.jpg',
-    'image/png': '.png',
-    'image/gif': '.gif',
-    'image/webp': '.webp',
-    'application/pdf': '.pdf',
-    'application/msword': '.doc',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-    'application/vnd.ms-excel': '.xls',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
-    'text/plain': '.txt',
-  };
-  return extensions[mimeType] || '';
+  const randomString = Math.random().toString(36).substring(2, 15);
+  const extension = path.extname(originalName);
+  const nameWithoutExt = path.basename(originalName, extension);
+  const sanitizedName = nameWithoutExt.replace(/[^a-zA-Z0-9]/g, '_');
+  
+  return `${sanitizedName}_${timestamp}_${randomString}${extension}`;
 }
 
 /**
  * Ensure upload directory exists
  */
-export async function ensureUploadDir(dir: string = UPLOAD_DIR): Promise<void> {
+async function ensureUploadDir(): Promise<string> {
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+  
   try {
-    if (!fs.existsSync(dir)) {
-      await mkdir(dir, { recursive: true });
+    await mkdir(uploadDir, { recursive: true });
+  } catch (error: any) {
+    if (error.code !== 'EEXIST') {
+      throw error;
     }
-  } catch (error) {
-    console.error('Error creating upload directory:', error);
-    throw new Error('Failed to create upload directory');
   }
+  
+  return uploadDir;
 }
 
 /**
@@ -107,56 +85,60 @@ export async function ensureUploadDir(dir: string = UPLOAD_DIR): Promise<void> {
  */
 export async function saveFileToDisk(
   file: File,
-  config: UploadConfig = {}
-): Promise<UploadResult> {
+  options: SaveFileOptions = {}
+): Promise<SaveFileResult> {
   try {
     const {
-      maxFileSize = MAX_FILE_SIZE,
       allowedTypes = ALLOWED_FILE_TYPES.all,
-      uploadDir = UPLOAD_DIR,
+      maxSize = MAX_FILE_SIZE,
       generateUniqueName = true,
-    } = config;
-
-    // Validate file size
-    if (!validateFileSize(file.size, maxFileSize)) {
-      return {
-        success: false,
-        error: `File size exceeds maximum allowed size of ${maxFileSize / (1024 * 1024)}MB`,
-      };
-    }
+    } = options;
 
     // Validate file type
-    if (!validateFileType(file.type, allowedTypes)) {
+    if (!allowedTypes.includes(file.type)) {
       return {
         success: false,
         error: `File type ${file.type} is not allowed`,
       };
     }
 
+    // Validate file size
+    if (file.size > maxSize) {
+      return {
+        success: false,
+        error: `File size ${file.size} exceeds maximum allowed size of ${maxSize} bytes`,
+      };
+    }
+
     // Ensure upload directory exists
-    await ensureUploadDir(uploadDir);
+    const uploadDir = await ensureUploadDir();
 
     // Generate filename
-    const fileName = generateUniqueName 
+    const fileName = generateUniqueName
       ? generateUniqueFileName(file.name)
       : file.name;
 
+    // Full file path
     const filePath = path.join(uploadDir, fileName);
-    const fileUrl = `/uploads/${fileName}`;
 
-    // Convert file to buffer and save
+    // Convert File to Buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
+
+    // Save file
     await writeFile(filePath, buffer);
+
+    // Generate URL
+    const fileUrl = `/uploads/${fileName}`;
 
     return {
       success: true,
       fileName,
+      originalName: file.name,
       filePath,
       fileUrl,
       fileSize: file.size,
       mimeType: file.type,
-      originalName: file.name,
     };
   } catch (error: any) {
     console.error('Error saving file:', error);
@@ -172,33 +154,86 @@ export async function saveFileToDisk(
  */
 export async function deleteFileFromDisk(filePath: string): Promise<boolean> {
   try {
-    if (fs.existsSync(filePath)) {
-      await fs.promises.unlink(filePath);
+    // Security check: ensure path is within uploads directory
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+    const normalizedPath = path.normalize(filePath);
+    
+    if (!normalizedPath.startsWith(uploadDir)) {
+      // If filePath is relative (like /uploads/file.pdf), convert to absolute
+      const absolutePath = path.join(process.cwd(), 'public', filePath);
+      const normalizedAbsPath = path.normalize(absolutePath);
+      
+      if (!normalizedAbsPath.startsWith(uploadDir)) {
+        console.error('Invalid file path: outside uploads directory');
+        return false;
+      }
+      
+      await unlink(normalizedAbsPath);
       return true;
     }
-    return false;
-  } catch (error) {
+    
+    await unlink(normalizedPath);
+    return true;
+  } catch (error: any) {
     console.error('Error deleting file:', error);
     return false;
   }
 }
 
 /**
- * Get file info
+ * Get file extension from mime type
  */
-export function getFileInfo(file: File) {
-  return {
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    lastModified: file.lastModified,
-    extension: path.extname(file.name),
-    sizeInMB: (file.size / (1024 * 1024)).toFixed(2),
+export function getExtensionFromMimeType(mimeType: string): string {
+  const mimeToExt: { [key: string]: string } = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'application/pdf': '.pdf',
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'application/vnd.ms-excel': '.xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
   };
+
+  return mimeToExt[mimeType] || '';
 }
 
 /**
- * Format file size
+ * Validate file
+ */
+export function validateFile(
+  file: File,
+  options: SaveFileOptions = {}
+): { valid: boolean; error?: string } {
+  const {
+    allowedTypes = ALLOWED_FILE_TYPES.all,
+    maxSize = MAX_FILE_SIZE,
+  } = options;
+
+  // Check file type
+  if (!allowedTypes.includes(file.type)) {
+    return {
+      valid: false,
+      error: `File type ${file.type} is not allowed. Allowed types: ${allowedTypes.join(', ')}`,
+    };
+  }
+
+  // Check file size
+  if (file.size > maxSize) {
+    const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(2);
+    return {
+      valid: false,
+      error: `File size exceeds maximum allowed size of ${maxSizeMB}MB`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Format file size for display
  */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 Bytes';
@@ -207,48 +242,28 @@ export function formatFileSize(bytes: number): string {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
 /**
- * Get file type category
+ * Get file category from mime type
  */
-export function getFileCategory(mimeType: string): string {
-  if (ALLOWED_FILE_TYPES.images.includes(mimeType)) return 'Image';
-  if (mimeType === 'application/pdf') return 'PDF';
-  if (mimeType.includes('word')) return 'Word Document';
-  if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return 'Spreadsheet';
-  return 'Document';
+export function getCategoryFromMimeType(mimeType: string): string {
+  if (mimeType.startsWith('image/')) {
+    return 'Photo';
+  } else if (mimeType === 'application/pdf') {
+    return 'ID Document'; // Default PDF to ID Document
+  } else if (
+    mimeType.includes('word') ||
+    mimeType.includes('document')
+  ) {
+    return 'Other';
+  } else if (
+    mimeType.includes('excel') ||
+    mimeType.includes('sheet')
+  ) {
+    return 'Bank Statement'; // Default spreadsheets to bank statements
+  }
+  
+  return 'Other';
 }
-
-/**
- * Validate multiple files
- */
-export function validateFiles(
-  files: File[],
-  config: UploadConfig = {}
-): { valid: boolean; errors: string[] } {
-  const {
-    maxFileSize = MAX_FILE_SIZE,
-    allowedTypes = ALLOWED_FILE_TYPES.all,
-  } = config;
-
-  const errors: string[] = [];
-
-  files.forEach((file, index) => {
-    if (!validateFileSize(file.size, maxFileSize)) {
-      errors.push(`File ${index + 1} (${file.name}): Size exceeds ${maxFileSize / (1024 * 1024)}MB`);
-    }
-    if (!validateFileType(file.type, allowedTypes)) {
-      errors.push(`File ${index + 1} (${file.name}): Type ${file.type} not allowed`);
-    }
-  });
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
-}
-
-// Export constants
-export { UPLOAD_DIR, MAX_FILE_SIZE, ALLOWED_FILE_TYPES };

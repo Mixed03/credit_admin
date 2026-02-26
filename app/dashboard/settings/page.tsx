@@ -1,20 +1,19 @@
-// app/dashboard/settings/page.tsx
+// app/dashboard/settings/page.tsx - UPDATED WITHOUT PASSWORD CHANGE
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { 
-  User, Lock, Bell, Database, Key, FileText, 
-  Save, Eye, EyeOff, AlertCircle, CheckCircle 
+  User, Bell, Database, Key, FileText, 
+  Save, AlertCircle, CheckCircle 
 } from 'lucide-react';
 
-type TabType = 'profile' | 'security' | 'notifications' | 'system';
+type TabType = 'profile' | 'notifications' | 'system';
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
   const [saving, setSaving] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Profile State
@@ -22,13 +21,6 @@ export default function SettingsPage() {
     name: user?.name || '',
     email: user?.email || '',
     role: user?.role || '',
-  });
-
-  // Password State
-  const [passwordData, setPasswordData] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
   });
 
   // Notification State
@@ -41,6 +33,42 @@ export default function SettingsPage() {
     monthlyDigest: true,
   });
 
+  // Update profile data when user changes
+  useEffect(() => {
+    if (user) {
+      setProfileData({
+        name: user.name || '',
+        email: user.email || '',
+        role: user.role || '',
+      });
+    }
+  }, [user]);
+
+  // Load notification settings on mount
+  useEffect(() => {
+    loadNotificationSettings();
+  }, []);
+
+  const loadNotificationSettings = async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      if (!token) return;
+
+      const response = await fetch('/api/auth/notifications', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setNotificationSettings(data);
+      }
+    } catch (error) {
+      console.error('Error loading notification settings:', error);
+    }
+  };
+
   const showMessage = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
     setTimeout(() => setMessage(null), 5000);
@@ -49,35 +77,38 @@ export default function SettingsPage() {
   const handleProfileSave = async () => {
     setSaving(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      showMessage('success', 'Profile updated successfully!');
+      const token = localStorage.getItem('auth_token');
+      if (!token) {
+        showMessage('error', 'Not authenticated');
+        return;
+      }
+
+      const response = await fetch('/api/auth/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: profileData.name,
+          email: profileData.email,
+        }),
+      });
+
+      if (response.ok) {
+        const updatedUser = await response.json();
+        // Update the auth context with new user data
+        if (updateUser) {
+          updateUser(updatedUser);
+        }
+        showMessage('success', 'Profile updated successfully!');
+      } else {
+        const error = await response.json();
+        showMessage('error', error.error || 'Failed to update profile');
+      }
     } catch (error) {
-      showMessage('error', 'Failed to update profile');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handlePasswordChange = async () => {
-    if (passwordData.newPassword !== passwordData.confirmPassword) {
-      showMessage('error', 'New passwords do not match');
-      return;
-    }
-
-    if (passwordData.newPassword.length < 6) {
-      showMessage('error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      showMessage('success', 'Password changed successfully!');
-      setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    } catch (error) {
-      showMessage('error', 'Failed to change password');
+      console.error('Profile update error:', error);
+      showMessage('error', 'Network error: Failed to update profile');
     } finally {
       setSaving(false);
     }
@@ -86,11 +117,30 @@ export default function SettingsPage() {
   const handleNotificationSave = async () => {
     setSaving(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      showMessage('success', 'Notification preferences saved!');
+      const token = localStorage.getItem('auth_token');
+      if (!token) {
+        showMessage('error', 'Not authenticated');
+        return;
+      }
+
+      const response = await fetch('/api/auth/notifications', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(notificationSettings),
+      });
+
+      if (response.ok) {
+        showMessage('success', 'Notification preferences saved!');
+      } else {
+        const error = await response.json();
+        showMessage('error', error.error || 'Failed to save preferences');
+      }
     } catch (error) {
-      showMessage('error', 'Failed to save preferences');
+      console.error('Notification save error:', error);
+      showMessage('error', 'Network error: Failed to save preferences');
     } finally {
       setSaving(false);
     }
@@ -98,7 +148,6 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'profile' as TabType, name: 'Profile', icon: User },
-    { id: 'security' as TabType, name: 'Security', icon: Lock },
     { id: 'notifications' as TabType, name: 'Notifications', icon: Bell },
     { id: 'system' as TabType, name: 'System', icon: Database },
   ];
@@ -199,6 +248,13 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* Info Box */}
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-700">
+                <strong>Note:</strong> For password changes or account security, please contact your administrator.
+              </p>
+            </div>
+
             <div className="flex justify-end pt-4">
               <button
                 onClick={handleProfileSave}
@@ -207,75 +263,6 @@ export default function SettingsPage() {
               >
                 <Save className="w-5 h-5" />
                 {saving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Security Tab */}
-        {activeTab === 'security' && (
-          <div className="p-8 space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 mb-1">Change Password</h2>
-              <p className="text-sm text-gray-600">Update your password to keep your account secure</p>
-            </div>
-
-            <div className="space-y-4 max-w-md">
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">
-                  Current Password
-                </label>
-                <input
-                  type="password"
-                  value={passwordData.currentPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">
-                  New Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={passwordData.newPassword}
-                    onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                  >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">Minimum 6 characters</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">
-                  Confirm New Password
-                </label>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={passwordData.confirmPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-4">
-              <button
-                onClick={handlePasswordChange}
-                disabled={saving || !passwordData.currentPassword || !passwordData.newPassword}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                <Lock className="w-5 h-5" />
-                {saving ? 'Updating...' : 'Update Password'}
               </button>
             </div>
           </div>

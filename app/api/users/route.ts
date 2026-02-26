@@ -37,9 +37,8 @@ export async function POST(request: NextRequest) {
     const user = new User(data);
     await user.save();
 
-    // Don't return password
-    const userWithoutPassword = user.toObject();
-    delete userWithoutPassword.password;
+    // Destructure to exclude password
+    const { password, ...userWithoutPassword } = user.toObject();
 
     return NextResponse.json(userWithoutPassword, { status: 201 });
   } catch (error: any) {

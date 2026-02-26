@@ -1,21 +1,81 @@
-// app/api/upload/route.ts - UPLOAD API ENDPOINT
+// app/api/upload/route.ts - MERGED UPLOAD API ENDPOINT
 import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Document from '@/models/Document';
 import { saveFileToDisk, ALLOWED_FILE_TYPES } from '@/lib/upload-utils';
+import cloudinary from '@/lib/cloudinary';
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-// POST - Upload file(s)
+// POST - Upload file(s) - Handles both Cloudinary images and document uploads
 export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    
+    // Check if this is a single file upload for Cloudinary (e.g., profile images)
+    const singleFile = formData.get('file') as File | null;
+    const uploadType = formData.get('uploadType') as string; // 'cloudinary' or 'document'
+    
+    // Handle Cloudinary image upload (for profile pictures, etc.)
+    if (singleFile && (!uploadType || uploadType === 'cloudinary')) {
+      return await handleCloudinaryUpload(singleFile);
+    }
+    
+    // Handle document upload (existing functionality)
+    return await handleDocumentUpload(formData);
+    
+  } catch (error: any) {
+    console.error('Upload error:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to upload' },
+      { status: 500 }
+    );
+  }
+}
+
+// Cloudinary upload handler for images (profile pictures, etc.)
+async function handleCloudinaryUpload(file: File) {
+  try {
+    if (!file.type.startsWith('image/')) {
+      return NextResponse.json(
+        { error: 'Only image files are allowed for Cloudinary upload' },
+        { status: 400 }
+      );
+    }
+
+    // Convert file to base64
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    const base64 = buffer.toString('base64');
+    const dataUri = `data:${file.type};base64,${base64}`;
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: 'ndtmfi/leadership', // Organized folder
+      resource_type: 'image',
+      transformation: [
+        { width: 400, height: 400, crop: 'fill', gravity: 'face' }, // Square crop
+        { quality: 'auto', fetch_format: 'auto' } // Optimize
+      ],
+    });
+
+    return NextResponse.json({
+      success: true,
+      url: result.secure_url,
+      publicId: result.public_id,
+    });
+  } catch (error: any) {
+    console.error('Cloudinary upload error:', error);
+    return NextResponse.json(
+      { error: error.message || 'Cloudinary upload failed' },
+      { status: 500 }
+    );
+  }
+}
+
+// Document upload handler (existing functionality)
+async function handleDocumentUpload(formData: FormData) {
   try {
     await dbConnect();
 
-    const formData = await request.formData();
     const files = formData.getAll('files') as File[];
     const relatedTo = formData.get('relatedTo') as string;
     const relatedId = formData.get('relatedId') as string;
@@ -99,9 +159,9 @@ export async function POST(request: NextRequest) {
       message: `Successfully uploaded ${uploadResults.length} of ${files.length} files`,
     });
   } catch (error: any) {
-    console.error('Upload error:', error);
+    console.error('Document upload error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to upload files' },
+      { error: error.message || 'Failed to upload documents' },
       { status: 500 }
     );
   }

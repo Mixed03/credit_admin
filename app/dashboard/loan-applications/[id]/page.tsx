@@ -1,9 +1,9 @@
-// app/dashboard/loan-applications/[id]/page.tsx - FIXED FOR NEXT.JS 16
+// app/dashboard/loan-applications/[id]/page.tsx - WITH DOCUMENT VIEWER
 'use client';
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Edit2, Trash2, FileText, User, DollarSign, Calendar, Briefcase, AlertCircle, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { ArrowLeft, Edit2, Trash2, FileText, User, DollarSign, Calendar, Briefcase, AlertCircle, CheckCircle, Clock, XCircle, Download, Eye, File, Image as ImageIcon } from 'lucide-react';
 
 interface Application {
   _id: string;
@@ -37,6 +37,21 @@ interface LoanProduct {
   description: string;
 }
 
+interface DocumentData {
+  _id: string;
+  fileName: string;
+  originalName: string;
+  fileType: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  category: string;
+  description?: string;
+  status: string;
+  verified: boolean;
+  createdAt: string;
+}
+
 export default function ApplicationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const unwrappedParams = use(params);
@@ -44,7 +59,9 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
   
   const [application, setApplication] = useState<Application | null>(null);
   const [product, setProduct] = useState<LoanProduct | null>(null);
+  const [documents, setDocuments] = useState<DocumentData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -82,6 +99,9 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
       if (data.loanProductId) {
         fetchLoanProduct(data.loanProductId);
       }
+
+      // Fetch documents
+      fetchDocuments();
     } catch (err: any) {
       console.error('Error fetching application:', err);
       setError(err.message);
@@ -106,7 +126,31 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
       }
     } catch (err) {
       console.error('Error fetching loan product:', err);
-      // Don't show error for product fetch failure
+    }
+  };
+
+  const fetchDocuments = async () => {
+    try {
+      setLoadingDocuments(true);
+      const token = localStorage.getItem('auth_token');
+      
+      const response = await fetch(
+        `/api/upload?relatedTo=Application&relatedId=${applicationId}&status=Active`,
+        {
+          headers: {
+            ...(token && { 'Authorization': `Bearer ${token}` }),
+          },
+        }
+      );
+
+      if (response.ok) {
+        const docs = await response.json();
+        setDocuments(docs);
+      }
+    } catch (err) {
+      console.error('Error fetching documents:', err);
+    } finally {
+      setLoadingDocuments(false);
     }
   };
 
@@ -127,7 +171,7 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
       });
 
       if (!response.ok) {
-        throw new Error('Failed to ');
+        throw new Error('Failed to update status');
       }
 
       const updatedApp = await response.json();
@@ -171,6 +215,52 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
     }
   };
 
+  const handleDocumentDelete = async (docId: string) => {
+    if (!confirm('Are you sure you want to delete this document?')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      
+      const response = await fetch(`/api/upload/${docId}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete document');
+      }
+
+      // Refresh documents list
+      fetchDocuments();
+      alert('Document deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting document:', err);
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const getFileIcon = (mimeType: string) => {
+    if (mimeType.startsWith('image/')) {
+      return <ImageIcon className="w-5 h-5 text-blue-600" />;
+    } else if (mimeType === 'application/pdf') {
+      return <FileText className="w-5 h-5 text-red-600" />;
+    } else {
+      return <File className="w-5 h-5 text-gray-600" />;
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'Approved':
@@ -205,7 +295,7 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
     if (!application) return 0;
     
     const principal = application.loanAmount;
-    const interestRate = product?.interestRate || 10; // Default 10% if no product
+    const interestRate = product?.interestRate || 10;
     const monthlyRate = (interestRate / 100) / 12;
     const numPayments = application.tenure;
     
@@ -229,7 +319,6 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
     return calculateTotalPayment() - application.loanAmount;
   };
 
-  // Loading State
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
@@ -261,7 +350,6 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
     );
   }
 
-  // No Data State
   if (!application) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -576,21 +664,84 @@ export default function ApplicationDetailPage({ params }: { params: Promise<{ id
 
           {/* Documents */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <FileText className="w-5 h-5 text-gray-600" />
-              <h2 className="text-lg font-bold text-gray-900">Documents</h2>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-gray-600" />
+                <h2 className="text-lg font-bold text-gray-900">Documents</h2>
+              </div>
+              {documents.length > 0 && (
+                <span className="text-sm text-gray-600">
+                  {documents.length} file{documents.length !== 1 ? 's' : ''}
+                </span>
+              )}
             </div>
-            {application.documents && application.documents.length > 0 ? (
+
+            {loadingDocuments ? (
+              <div className="text-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              </div>
+            ) : documents.length > 0 ? (
               <div className="space-y-2">
-                {application.documents.map((doc, index) => (
-                  <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
-                    <FileText className="w-4 h-4 text-gray-600" />
-                    <span className="text-sm text-gray-900">{doc}</span>
+                {documents.map((doc) => (
+                  <div
+                    key={doc._id}
+                    className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition"
+                  >
+                    <div className="flex-shrink-0">
+                      {getFileIcon(doc.mimeType)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">
+                        {doc.originalName}
+                      </p>
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
+                        <span>{formatFileSize(doc.fileSize)}</span>
+                        <span>•</span>
+                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">
+                          {doc.category}
+                        </span>
+                        {doc.verified && (
+                          <>
+                            <span>•</span>
+                            <span className="text-green-600">✓ Verified</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <a
+                        href={doc.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                        title="View document"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </a>
+                      <a
+                        href={doc.fileUrl}
+                        download={doc.originalName}
+                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                        title="Download document"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                      <button
+                        onClick={() => handleDocumentDelete(doc._id)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                        title="Delete document"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-600">No documents uploaded</p>
+              <div className="text-center py-6">
+                <FileText className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-600">No documents uploaded</p>
+              </div>
             )}
           </div>
 

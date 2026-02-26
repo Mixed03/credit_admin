@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   X,
+  Info,
   ChevronRight,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -42,6 +43,11 @@ export default function Sidebar() {
       label: 'Applications',
       href: '/dashboard/loan-applications',
       // badge: 12,
+    },
+    {
+      icon: <Info className="w-5 h-5" />,
+      label: 'About Us',
+      href: '/dashboard/about',
     },
     {
       icon: <Package className="w-5 h-5" />,
@@ -105,11 +111,10 @@ export default function Sidebar() {
             key={idx}
             href={item.href}
             onClick={() => setIsOpen(false)}
-            className={`flex items-center justify-between px-4 py-3 rounded-lg transition duration-200 group ${
-              isActive(item.href)
+            className={`flex items-center justify-between px-4 py-3 rounded-lg transition duration-200 group ${isActive(item.href)
                 ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg'
                 : 'text-gray-300 hover:bg-gray-700'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-3">
               <div className={isActive(item.href) ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}>
@@ -131,11 +136,10 @@ export default function Sidebar() {
         <Link
           href="/dashboard/settings"
           onClick={() => setIsOpen(false)}
-          className={`flex items-center gap-3 px-4 py-3 rounded-lg transition duration-200 group ${
-            isActive('/dashboard/settings')
+          className={`flex items-center gap-3 px-4 py-3 rounded-lg transition duration-200 group ${isActive('/dashboard/settings')
               ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg'
               : 'text-gray-300 hover:bg-gray-700'
-          }`}
+            }`}
         >
           <Settings className={`w-5 h-5 ${isActive('/dashboard/settings') ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}`} />
           <span className={`font-medium ${isActive('/dashboard/settings') ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}`}>Settings</span>
